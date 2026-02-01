@@ -1,0 +1,107 @@
+---
+- name: Deploy Plex Server
+  hosts: localhost
+  become: true
+  tasks:
+
+  - name: Install fuse-overlayfs package
+    ansible.builtin.package:
+      name: fuse-overlayfs
+      state: present
+
+  - name: Ensure containers config directory exists
+    ansible.builtin.file:
+      path: /etc/containers
+      state: directory
+      mode: '0755'
+
+  - name: Configure Podman to use fuse-overlayfs storage driver in storage.conf
+    ansible.builtin.copy:
+      content: |
+        [storage]
+        driver = "overlay"
+        [storage.options.overlay]
+        mount_program = "/usr/bin/fuse-overlayfs"
+        mountopt = "nodev,metacopy=on"
+      dest: /etc/containers/storage.conf
+      mode: '0644'
+
+  - name: Configure Podman to use cgroupfs cgroup manager
+    ansible.builtin.copy:
+      content: |
+        cgroup_manager = "cgroupfs"
+      dest: /etc/containers/libpod.conf
+      mode: '0644'
+
+  - name: Ensure Podman is installed
+    package:
+      name: podman
+      state: present
+
+  - name: Ensure Podman is running
+    systemd:
+      name: podman
+      state: started
+      enabled: true
+
+  - name: Ensure Podman restarts at boot
+    systemd:
+      name: podman-restart
+      state: started
+      enabled: true
+
+  - name: Create plex group
+    group:
+      name: plex
+      state: present
+
+  - name: Create plex user
+    user:
+      name: plex
+      group: plex
+      create_home: no
+      shell: /bin/false
+      home: /opt/plex
+
+  - name: Create Plex config directory
+    file:
+      path: /opt/plex/config
+      state: directory
+      mode: '0755'
+      owner: plex
+      group: plex
+
+  - name: Create Plex media directory
+    file:
+      path: /opt/plex/media
+      state: directory
+      mode: '0755'
+      owner: plex
+      group: plex
+
+  - name: Set ownership of Plex directories to plex user
+    file:
+      path: /opt/plex/
+      owner: plex
+      group: plex
+      recurse: yes
+
+  - name: Run Plex in a Podman container
+    containers.podman.podman_container:
+      name: plex
+      image: docker.io/plexinc/pms-docker:latest
+      state: started
+      restart_policy: always
+      ports:
+        - "32400:32400"
+      volumes:
+        - /opt/plex/config:/config
+        - /opt/plex/media:/data
+      env:
+        PLEX_UID="1000"
+        PLEX_GID="1000"
+      log_driver: json-file
+
+  - name: Display Plex server setup message
+    debug:
+      msg: "Plex server is up and running on port 32400!"
